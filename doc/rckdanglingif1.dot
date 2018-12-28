@@ -1,0 +1,20 @@
+digraph G {
+g2504 [label="-if"];
+g2505 [label="id: x"];
+g2506 [label="-if"];
+g2507 [label="id: y"];
+g2508 [label="-call-stat"];
+g2509 [label="-call"];
+g2508 -> g2509;
+g2510 [label="-else"];
+g2511 [label="-call-stat"];
+g2512 [label="-call"];
+g2511 -> g2512;
+g2510 -> g2511;
+g2506 -> g2507;
+g2506 -> g2508;
+g2506 -> g2510;
+g2504 -> g2505;
+g2504 -> g2506;
+g2504
+}

@@ -1,0 +1,244 @@
+* DCG-like parsing in Racket with Racklog
+** Introduction
+
+[[https://en.wikipedia.org/wiki/Definite_clause_grammar][Definite clause grammars]] is a technique used in logic programming languages to write grammars and create parsers for them.
+
+In this post we're going to be using the along with Racklog library which.
+
+- Racket
+- Racklog
+- DCG
+
+** How it looks
+
+Here's an example a predicate for parsing an =if= statement for a fictional language.
+
+#+BEGIN_EXAMPLE
+(define %if-stat
+  (%rel (ctxt new-ctxt)
+        [(ctxt new-ctxt)
+         (%let (ifkw-ctxt lpar-ctxt rpar-ctxt
+                cond-ctxt then-ctxt
+                stats-ctxt else-ctxt end-ctxt)
+               (%and
+                ((%literal-id "if")   ctxt ifkw-ctxt) 
+                (%lpar                ifkw-ctxt lpar-ctxt)
+                (%expression          lpar-ctxt cond-ctxt)
+                (%rpar                cond-ctxt rpar-ctxt)
+                ((%literal-id "then") rpar-ctxt then-ctxt)
+                (%stat                then-ctxt stats-ctxt)
+                ((%opt %else-block)   stats-ctxt else-ctxt)
+                (%is new-ctxt (with-result
+                                `(-if ,(parse-context-result cond-ctxt)
+                                      ,(parse-context-result stats-ctxt)
+                                      ,(parse-context-result else-ctxt))
+                                else-ctxt))))]))
+
+#+END_EXAMPLE
+
+Running this predicate from the =REPL= using a string with sample code produces the following output:
+
+#+BEGIN_EXAMPLE
+racklogexperiments.rkt> (parse-context-result
+ (cdar
+   (%which (result-ctxt)
+           (%if-stat (string-context "if (c) then
+                                        foo(c);
+                                      else
+                                         moo(d);")
+                 result-ctxt))))
+'(-if
+  (-id "c")
+  (-call-stat (-call "foo" ((-id "c"))))
+  (-else (-call-stat (-call "moo" ((-id "d"))))))
+racklogexperiments.rkt> 
+
+
+#+END_EXAMPLE
+
+** Parsing context
+
+An important piece that we need to define our parsers it's the parsing context. This element is represented as as simple structure which keeps track of :
+
+1. The result or =output= of the last parser.
+2. The text used as input for the parser.
+3. The current position inside the string. A simple index.
+
+#+BEGIN_EXAMPLE
+
+(struct
+  parse-context
+  (result text position))
+
+(define (string-context str)
+        (parse-context '() str 0))
+
+(define (with-result value ctxt)
+  (struct-copy parse-context ctxt [result value]))
+#+END_EXAMPLE
+
+
+The way we define parsers using =Racklog= predicates is that we transform an input parsing context to new context. The new context is going to have a the result of the last parsing operation and it will move the position as many characters as consumed by the last parsing operation.
+
+We use a couple of parsers as the foundation for all must all other parsers.  The first one, =get-char-from-context= has the next available character as the result.
+
+#+BEGIN_EXAMPLE
+(define %a-char
+  (%rel (a-char ctxt new-ctxt)
+        [(a-char ctxt new-ctxt)
+            (%is #t (has-more-chars? ctxt))
+            (%is new-ctxt (get-char-from-context ctxt))
+            (%is a-char (parse-context-result new-ctxt))
+            ]))
+#+END_EXAMPLE
+
+
+The code for the utility functions used in these parsers is the following:
+
+#+BEGIN_EXAMPLE
+
+(define (get-char-from-context ctxt)
+  (struct-copy
+     parse-context
+     ctxt
+     [result (string-ref (parse-context-text ctxt) (parse-context-position ctxt))]
+     [position (+ 1 (parse-context-position ctxt))]))
+
+(define (has-more-chars? ctx)
+   (<
+      (parse-context-position ctx)
+      (string-length (parse-context-text ctx))))
+
+#+END_EXAMPLE
+
+The =get-char-from-context= function creates a new context with the current character as result and advances the context to the next position. This function is used inside the =%a-char=, we use Racklog unification and =%and= to chain together the parsing contexts. For example the following simple interaction:
+
+#+BEGIN_EXAMPLE
+racklogexperiments.rkt> (define result (%which (c1 result-ctxt) 
+                                               (%and (%a-char #\a (string-context "abc") c1)
+                                                     (%a-char #\b c1 result-ctxt))))
+racklogexperiments.rkt> result
+'((c1 . #<parse-context>) (result-ctxt . #<parse-context>))
+racklogexperiments.rkt> (assoc 'result-ctxt result)
+'(result-ctxt . #<parse-context>)
+racklogexperiments.rkt> (parse-context-result (cdr (assoc 'result-ctxt result)))
+#\b
+racklogexperiments.rkt> (parse-context-position (cdr (assoc 'result-ctxt result)))
+2
+racklogexperiments.rkt> 
+#+END_EXAMPLE
+
+Here we create a very simple parser that recognizes the sequence: "ab". As presented above the position of the resulting parsing context is =2= which is the zero based position inside the string.
+
+** Sequences
+
+A very useful parser is one that let's you apply another parser zero or more times. The parser that archives this is the following:
+
+#+BEGIN_EXAMPLE
+(define %p-simple-sequence
+  (λ (pred)
+    (%rel (ctxt new-ctxt)
+          [(ctxt new-ctxt)
+           (%let (tmp-ctxt tmp-result)
+                 (%or
+                  (%and
+                   (pred ctxt tmp-ctxt)
+                   (%is tmp-result (with-result                                     
+                                     (cons (parse-context-result tmp-ctxt)
+                                           (parse-context-result ctxt))
+                                     tmp-ctxt))
+                   ((%p-simple-sequence pred) tmp-result new-ctxt))
+                  (%is new-ctxt ctxt)))])))
+
+(define %p-sequence
+  (λ (pred)
+    (%rel ( ctxt new-ctxt)
+          [(ctxt new-ctxt)
+           (%let (tmp-ctxt)
+               (%and
+                 (%is tmp-ctxt (with-result '() ctxt))
+                 ((%p-simple-sequence pred)
+                  tmp-ctxt new-ctxt)
+                 ))]
+          )))
+#+END_EXAMPLE 
+
+We can apply this parser as follows:
+
+#+BEGIN_EXAMPLE
+
+racklogexperiments.rkt> (parse-context-result 
+       (cdar (%which (result-ctxt) 
+               ((%p-sequence 
+                    (%rel (c r) [(c r) (%a-char #\a c r)])) 
+                (string-context "aaaa") result-ctxt)))  )
+'(#\a #\a #\a #\a)
+racklogexperiments.rkt> 
+
+#+END_EXAMPLE
+
+** Optionals
+
+Another useful element we need is a way to parse optional elements. We used this in our =if= example above for the =else= section.
+
+To implement this we use  =%or= to try to parse the optional parser first or succeed with an empty result. Using this technique will enable multiple solutions (see an example of this below).
+
+#+BEGIN_EXAMPLE
+(define %opt
+  (λ (parser)
+    (%rel (ctxt new-ctxt)
+          [(ctxt new-ctxt)
+           (%let (tmp-ctxt)
+                 (%and
+                  (%or (parser ctxt new-ctxt)
+                       (%is new-ctxt (with-result '() ctxt)))))])))
+#+END_EXAMPLE
+
+** Multiple possible ASTs
+
+One interesting posibility of using a =Racklog= (or Prolog's DCGs) is that you can get many possible interpretations of the grammar. Although it may not be of practical use it looks rather interesting. 
+
+An example of these shows up when parsing an =if= statement with a [dangling else][https://en.wikipedia.org/wiki/Dangling_else] .
+
+#+BEGIN_EXAMPLE
+(define sample-code
+  "if (x) then if (y) then foo(); else goo();")
+#+END_EXAMPLE
+
+Here there are two possible valid interpretations of this =if= statement. The default one:
+
+#+BEGIN_EXAMPLE
+racklogexperiments.rkt> (parse-context-result
+ (cdar
+  (%which (result-ctxt)
+          (%if-stat (string-context sample-code)
+                    result-ctxt))))
+
+'(-if
+  (-id "x")
+  (-if
+   (-id "y")
+   (-call-stat (-call "foo" ()))
+   (-else (-call-stat (-call "goo" ()))))
+  ())
+racklogexperiments.rkt> 
+#+END_EXAMPLE
+
+Here's an alternative visualization of this tree:
+
+[[first option][file:rckdanglingif1.jpg]]
+
+We can now ask =Racklog= for another solution using the =%more= function. See the result here:
+
+#+BEGIN_EXAMPLE
+racklogexperiments.rkt> (parse-context-result (cdar (%more)))
+'(-if
+  (-id "x")
+  (-if (-id "y") (-call-stat (-call "foo" ())) ())
+  (-else (-call-stat (-call "goo" ()))))
+racklogexperiments.rkt> 
+#+END_EXAMPLE
+
+Here's the other alternative visualization:
+
+[[first option][file:rckdanglingif2.jpg]]
