@@ -1,17 +1,14 @@
-* DCG-like parsing in Racket with Racklog
-** Introduction
+* Using Racklog for parsing
 
-[[https://en.wikipedia.org/wiki/Definite_clause_grammar][Definite clause grammars]] is a technique used in logic programming languages to write grammars and create parsers for them.
+This post shows a small experiment of creating parsing predicates using the [[http://docs.racket-lang.org/racklog/][Racket's Racklog]] package . This package enables the use of logic programming features inside [[https://racket-lang.org/][Racket]]. 
 
-In this post we're going to be using the along with Racklog library which.
+Logic programming languages, like Prolog, use the [[https://en.wikipedia.org/wiki/Definite_clause_grammar][Definite clause grammars]] syntax for this  purpose. In this post this technique is not directly used, the goal is to express the grammar in the same way the DCG syntax is expanded. A nice experiment for a future post is to create macros for hiding state change variables.
 
-- Racket
-- Racklog
-- DCG
+As always the goal is to experiment with a concept without worrying too much about performance!
 
 ** How it looks
 
-Here's an example a predicate for parsing an =if= statement for a fictional language.
+Here's an example of a predicate for parsing an =if= statement for a fictional language.
 
 #+BEGIN_EXAMPLE
 (define %if-stat
@@ -53,16 +50,15 @@ racklogexperiments.rkt> (parse-context-result
   (-else (-call-stat (-call "moo" ((-id "d"))))))
 racklogexperiments.rkt> 
 
-
 #+END_EXAMPLE
 
-** Parsing context
+** Creating parsing predicates
 
-An important piece that we need to define our parsers it's the parsing context. This element is represented as as simple structure which keeps track of :
+An important piece that we need to define our parsers it's the "parsing context". This element is represented as as simple structure which keeps track of :
 
 1. The result or =output= of the last parser.
 2. The text used as input for the parser.
-3. The current position inside the string. A simple index.
+3. The current position inside the string as a zero-based index. 
 
 #+BEGIN_EXAMPLE
 
@@ -80,7 +76,7 @@ An important piece that we need to define our parsers it's the parsing context. 
 
 The way we define parsers using =Racklog= predicates is that we transform an input parsing context to new context. The new context is going to have a the result of the last parsing operation and it will move the position as many characters as consumed by the last parsing operation.
 
-We use a couple of parsers as the foundation for all must all other parsers.  The first one, =get-char-from-context= has the next available character as the result.
+We use a couple of parsers as the foundation for all must all other parsers.  The first one, =%a-char= has the next available character as the result.
 
 #+BEGIN_EXAMPLE
 (define %a-char
@@ -91,7 +87,6 @@ We use a couple of parsers as the foundation for all must all other parsers.  Th
             (%is a-char (parse-context-result new-ctxt))
             ]))
 #+END_EXAMPLE
-
 
 The code for the utility functions used in these parsers is the following:
 
@@ -111,7 +106,7 @@ The code for the utility functions used in these parsers is the following:
 
 #+END_EXAMPLE
 
-The =get-char-from-context= function creates a new context with the current character as result and advances the context to the next position. This function is used inside the =%a-char=, we use Racklog unification and =%and= to chain together the parsing contexts. For example the following simple interaction:
+The =get-char-from-context= function creates a new context with the current character as result and advances the context to the next position. We use Racklog unification and =%and= to chain together the parsing contexts. The following interaction illustrates this:
 
 #+BEGIN_EXAMPLE
 racklogexperiments.rkt> (define result (%which (c1 result-ctxt) 
@@ -128,7 +123,7 @@ racklogexperiments.rkt> (parse-context-position (cdr (assoc 'result-ctxt result)
 racklogexperiments.rkt> 
 #+END_EXAMPLE
 
-Here we create a very simple parser that recognizes the sequence: "ab". As presented above the position of the resulting parsing context is =2= which is the zero based position inside the string.
+Here we create a very simple parser that recognizes the sequence:  "ab" . As presented above, the position of the resulting parsing context is =2= which is the zero based position inside the string after 'b'.
 
 ** Sequences
 
@@ -196,9 +191,9 @@ To implement this we use  =%or= to try to parse the optional parser first or suc
 
 ** Multiple possible ASTs
 
-One interesting posibility of using a =Racklog= (or Prolog's DCGs) is that you can get many possible interpretations of the grammar. Although it may not be of practical use it looks rather interesting. 
+One interesting possibility of using a =Racklog= (or Prolog's DCGs) is that you can get many possible interpretations of the grammar. Although it may not be of practical use it looks rather interesting. 
 
-An example of these shows up when parsing an =if= statement with a [dangling else][https://en.wikipedia.org/wiki/Dangling_else] .
+An example of these shows up when parsing an =if= statement with a [[dangling else][https://en.wikipedia.org/wiki/Dangling_else]] .
 
 #+BEGIN_EXAMPLE
 (define sample-code
@@ -242,3 +237,7 @@ racklogexperiments.rkt>
 Here's the other alternative visualization:
 
 [[first option][file:rckdanglingif2.jpg]]
+
+** Code
+
+The code for this post can be found [[https://github.com/ldfallas/racketexperiments][here]].
